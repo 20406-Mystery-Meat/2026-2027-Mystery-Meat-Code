@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.shooting;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 /**
  * Projectile model for the fixed-hood shooter, WITH air drag (wiffle-style POLLEN balls

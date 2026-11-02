@@ -11,13 +11,13 @@ import org.firstinspires.ftc.teamcode.neuronpathing.Pose2D;
  * are never commanded here) and confirm x/y/heading track what you expect:
  * x increases driving away from your start, y increases strafing left,
  * heading increases turning counter-clockwise. If any of those are backwards,
- * fix the offsets/encoder directions passed into NeuronLocalizer, not the math.
+ * fix PINPOINT_X/Y_REVERSED and the pod offsets in Constants.java, not the math.
  */
 @TeleOp(name = "Neuron Localizer Test")
 public class NeuronLocalizerTest extends LinearOpMode {
     @Override
     public void runOpMode() {
-        NeuronLocalizer localizer = new NeuronLocalizer(hardwareMap, telemetry, /*xOffsetMm=*/0, /*yOffsetMm=*/0);
+        NeuronLocalizer localizer = new NeuronLocalizer(hardwareMap, telemetry); // offsets/pods/directions: Constants.java
         localizer.setPosition(new Pose2D(0, 0, 0));
         localizer.calibrate(true);
 

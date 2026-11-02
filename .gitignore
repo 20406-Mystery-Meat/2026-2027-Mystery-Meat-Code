@@ -83,5 +83,3 @@ lint/tmp/
 docs
 tools
 index.html
-# Robot logs pulled with tools/pull_logs.sh (large; keep out of git)
-robot-logs/

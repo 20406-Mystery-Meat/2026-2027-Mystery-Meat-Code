@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.shooting;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import java.util.Random;
 
@@ -27,8 +27,8 @@ import java.util.Random;
  * The samples are generated once, so the answer is smooth and repeatable (no flicker around
  * the 85% threshold), and N=512 costs only ~20 microseconds per loop.
  *
- * The spreads are first guesses. They get CALIBRATED from real shots: mark made/missed in the
- * Shot Table tuner and tools/analyze_log.py compares predicted vs actual hit rates.
+ * The spreads are first guesses (Constants.java SECTION 9). If auto-fire shoots too many misses,
+ * raise them; if it holds off on shots that would have gone in, lower them.
  */
 public class ShotConfidence {
     private static final int N = 512;
@@ -44,7 +44,7 @@ public class ShotConfidence {
         }
     }
 
-    // ---- last result (for telemetry / logs)
+    // ---- last result (for telemetry)
     public double p;
     public double meanRange, meanLat, sigmaRange, sigmaLat, sigmaMove, sigmaAccel;
 

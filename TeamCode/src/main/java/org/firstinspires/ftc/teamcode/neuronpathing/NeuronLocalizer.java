@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.neuronpathing;
 
+import static org.firstinspires.ftc.teamcode.Constants.*;
+
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
@@ -21,7 +23,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit
 public class NeuronLocalizer {
     private final Telemetry telemetry;
     public final GoBildaPinpointDriver pinpoint;
-    private boolean calibrated = false;
 
     public NeuronLocalizer(HardwareMap hwMap, Telemetry telemetry, String deviceName,
                             double xOffsetMm, double yOffsetMm,
@@ -36,16 +37,24 @@ public class NeuronLocalizer {
         pinpoint.setEncoderDirections(xEncoderDirection, yEncoderDirection);
     }
 
-    /** Convenience constructor using the goBILDA 4-bar pod and the "pinpoint" device name. */
+    /**
+     * Everything from Constants.java (SECTIONS 1-2): device name, pod offsets, pod resolution and
+     * encoder directions. Use this one -- then the Localizer Test, autos and TeleOp all agree.
+     */
+    public NeuronLocalizer(HardwareMap hwMap, Telemetry telemetry) {
+        this(hwMap, telemetry, PINPOINT_X_OFFSET_MM, PINPOINT_Y_OFFSET_MM);
+    }
+
+    /** Constants for everything except the pod offsets. */
     public NeuronLocalizer(HardwareMap hwMap, Telemetry telemetry, double xOffsetMm, double yOffsetMm) {
-        this(hwMap, telemetry, "pinpoint", xOffsetMm, yOffsetMm,
+        this(hwMap, telemetry, PINPOINT, xOffsetMm, yOffsetMm,
                 GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD,
-                GoBildaPinpointDriver.EncoderDirection.FORWARD,
-                GoBildaPinpointDriver.EncoderDirection.REVERSED);
+                PINPOINT_X_REVERSED ? GoBildaPinpointDriver.EncoderDirection.REVERSED : GoBildaPinpointDriver.EncoderDirection.FORWARD,
+                PINPOINT_Y_REVERSED ? GoBildaPinpointDriver.EncoderDirection.REVERSED : GoBildaPinpointDriver.EncoderDirection.FORWARD);
+        pinpoint.setEncoderResolution(PINPOINT_TICKS_PER_MM, DistanceUnit.MM);
     }
 
     public Pose2D getPose() {
-        warnIfNotCalibrated();
         pinpoint.update();
         return new Pose2D(
                 pinpoint.getPosition().getX(DistanceUnit.INCH),
@@ -54,17 +63,14 @@ public class NeuronLocalizer {
     }
 
     public double getAngularVelocityDegPerSec() {
-        warnIfNotCalibrated();
         return pinpoint.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES);
     }
 
     public double velX() {
-        warnIfNotCalibrated();
         return pinpoint.getVelX(DistanceUnit.INCH);
     }
 
     public double velY() {
-        warnIfNotCalibrated();
         return pinpoint.getVelY(DistanceUnit.INCH);
     }
 
@@ -97,23 +103,8 @@ public class NeuronLocalizer {
 
             pinpoint.update();
             if (pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY) {
-                calibrated = true;
-                if (telemetry != null) {
-                    telemetry.log().add("Neuron Pathing: Pinpoint calibrated and position reset");
-                }
                 return;
             }
-        }
-
-        if (telemetry != null) {
-            telemetry.log().add("Neuron Pathing: Pinpoint failed to reach READY. Status: "
-                    + pinpoint.getDeviceStatus());
-        }
-    }
-
-    private void warnIfNotCalibrated() {
-        if (!calibrated && telemetry != null) {
-            telemetry.log().add("Neuron Pathing: reading Pinpoint pose before calibrate() was called");
         }
     }
 }

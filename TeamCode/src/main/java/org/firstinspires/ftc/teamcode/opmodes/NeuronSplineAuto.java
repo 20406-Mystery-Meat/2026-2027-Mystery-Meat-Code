@@ -6,7 +6,6 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import org.firstinspires.ftc.teamcode.neuronpathing.NeuronDrive;
 import org.firstinspires.ftc.teamcode.neuronpathing.NeuronLocalizer;
 import org.firstinspires.ftc.teamcode.neuronpathing.Pose2D;
-import org.firstinspires.ftc.teamcode.subsystems.ExampleClaw;
 
 /**
  * Example autonomous showing the exact shape of code the Neuron Path Planner
@@ -14,23 +13,16 @@ import org.firstinspires.ftc.teamcode.subsystems.ExampleClaw;
  * splineToPoint()/goToPoint() calls, each followed by driveToTarget(). Plan a
  * path visually in the tool, copy the generated block, and drop it in where
  * the TODO is below.
- *
- * Also shows how a subsystem's public methods drop into that same sequence: claw
- * calls sit right next to the drive calls, in whatever order the auto needs.
- * See docs/subsystems.md for the full pattern.
  */
 @Autonomous(name = "Neuron Spline Auto (Example)")
 public class NeuronSplineAuto extends LinearOpMode {
     NeuronLocalizer localizer;
     NeuronDrive drive;
-    ExampleClaw claw;
 
     @Override
     public void runOpMode() throws InterruptedException {
-        localizer = new NeuronLocalizer(hardwareMap, telemetry, /*xOffsetMm=*/0, /*yOffsetMm=*/0);
-        drive = new NeuronDrive(hardwareMap, localizer, /*trackWidthIn=*/14);
-        claw = new ExampleClaw(hardwareMap);
-        claw.close();
+        localizer = new NeuronLocalizer(hardwareMap, telemetry); // Constants.java
+        drive = new NeuronDrive(hardwareMap, localizer);        // Constants.java
 
         // Set this to wherever your robot actually starts on the field.
         localizer.setPosition(new Pose2D(0, 0, 0));
@@ -43,13 +35,8 @@ public class NeuronSplineAuto extends LinearOpMode {
         drive.splineToPoint(new Pose2D(24, 24, Math.toRadians(90)), false, false, 1, 0.8);
         driveToTarget();
 
-        claw.open();
-        waitMs(300);
-
         drive.goToPoint(new Pose2D(24, 0, 0), false, 0.6);
         driveToTarget();
-
-        claw.close();
     }
 
     // Blocks until the active goToPoint()/splineToPoint() move finishes. NeuronDrive
@@ -57,22 +44,10 @@ public class NeuronSplineAuto extends LinearOpMode {
     private void driveToTarget() {
         while (opModeIsActive() && drive.isBusy()) {
             drive.update();
-            claw.update();
             telemetry.addData("state", drive.driveState);
             telemetry.addData("x", drive.pose.x);
             telemetry.addData("y", drive.pose.y);
             telemetry.update();
-        }
-    }
-
-    // Pauses for ms milliseconds while still actively holding position and
-    // updating subsystems (so a claw mid-motion, etc. keeps running).
-    private void waitMs(double ms) {
-        double start = System.currentTimeMillis();
-        while (opModeIsActive() && System.currentTimeMillis() - start < ms) {
-            drive.update();
-            claw.update();
-            idle();
         }
     }
 }

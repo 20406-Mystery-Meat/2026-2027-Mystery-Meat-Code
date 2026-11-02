@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.subsystems;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -23,7 +23,7 @@ public class Flywheel {
     public double targetRpm, rpm, power;
     /** Main-wheel rpm averaged over FLY_FILTER_MS -- used for the "ready to fire" check. */
     public double rpmFiltered;
-    private final VelocityWindow window = new VelocityWindow(48);
+    private final VelocityWindow window = new VelocityWindow(FLY_FILTER_BUFFER);
     public int shots;
     public boolean inDip;
     /** Seconds from the most recent dip back to "ready" -- shows how fast you can fire. */
@@ -35,11 +35,13 @@ public class Flywheel {
     /** Tuners only: if not NaN, this raw power is sent instead of the controller output. */
     public double rawPowerOverride = Double.NaN;
     private double dipMinRpm;
+    private double lastSent = Double.NaN;
+    private long lastSentNs;
     private long dipStartNs;
 
     public Flywheel(HardwareMap hw) {
         motor = hw.get(DcMotorEx.class, FLYWHEEL_MOTOR);
-        motor.setDirection(FLYWHEEL_REVERSED ? DcMotorSimple.Direction.REVERSE : DcMotorSimple.Direction.FORWARD);
+        motor.setDirection(FLYWHEEL_REVERSED ? DcMotorSimple.Direction.FORWARD : DcMotorSimple.Direction.REVERSE);
         motor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         motor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         out = new HwCache.Power(motor);
@@ -50,7 +52,7 @@ public class Flywheel {
     }
 
     public void setTargetRpm(double wheelRpm) {
-        targetRpm = Math.max(0, Math.min(FLY_MAX_WHEEL_RPM, wheelRpm));
+        targetRpm = Math.max(-FLY_MAX_WHEEL_RPM, Math.min(FLY_MAX_WHEEL_RPM, wheelRpm)); // negative = backward
     }
 
     /**
@@ -78,13 +80,13 @@ public class Flywheel {
             dipMinRpm = rpm;
         } else if (inDip) {
             dipMinRpm = Math.min(dipMinRpm, rpm);
-            if (error() < FLY_READY_TOL_RPM) {
+            if (targetRpm <= 0) {
+                inDip = false; // stopped shooting mid-dip; don't report a bogus recovery
+            } else if (error() < FLY_READY_TOL_RPM) {
                 inDip = false;
                 lastRecoveryS = (System.nanoTime() - dipStartNs) / 1e9;
                 lastDipDepth = targetRpm - dipMinRpm;
                 recoveries++;
-            } else if (targetRpm == 0) {
-                inDip = false; // spun down mid-dip; don't report a bogus recovery
             }
         }
     }
@@ -106,15 +108,26 @@ public class Flywheel {
         return ready(FLY_READY_TOL_RPM);
     }
 
+    /**
+     * The flywheel takes ~0.2 s to respond, so re-sending its power every loop (~1 ms per write)
+     * buys nothing: send at most every FLY_WRITE_PERIOD_MS, but immediately for big changes
+     * (a shot's recovery, spin-up) or a stop. tools/sim checks this doesn't cost accuracy.
+     */
     public void write(double batteryVolts) {
         power = Control.flywheelPower(targetRpm, rpm, batteryVolts);
         if (!Double.isNaN(rawPowerOverride)) power = rawPowerOverride;
-        out.set(power);
+        long now = System.nanoTime();
+        if (Control.flywheelShouldSend(power, lastSent, (now - lastSentNs) / 1e6)) {
+            out.set(power);
+            lastSent = power;
+            lastSentNs = now;
+        }
     }
 
     public void stop() {
         targetRpm = 0;
         power = 0;
         out.set(0);
+        lastSent = 0;
     }
 }

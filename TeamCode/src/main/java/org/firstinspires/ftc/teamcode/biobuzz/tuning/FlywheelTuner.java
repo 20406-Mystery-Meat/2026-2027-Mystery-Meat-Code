@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.tuning;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -41,24 +41,22 @@ public class FlywheelTuner extends LinearOpMode {
 
         waitForStart();
         robot.initPose(Field.resetPose(), false);
-        robot.startLog("FlywheelTuner");
 
         try {
             while (opModeIsActive()) {
                 robot.read();
                 params.handle(gamepad1);
-                if (gamepad1.aWasPressed()) { on = !on; robot.event("FLYWHEEL " + (on ? "on " + target : "off")); }
+                if (gamepad1.aWasPressed()) { on = !on; }
                 if (gamepad1.dpadUpWasPressed()) target = Math.min(FLY_MAX_WHEEL_RPM, target + 100);
                 if (gamepad1.dpadDownWasPressed()) target = Math.max(0, target - 100);
-                if (gamepad1.optionsWasPressed()) { ConfigIO.save(); robot.event("SAVE config " + params.describe()); }
+                if (gamepad1.optionsWasPressed()) { ConfigIO.save(); }
                 if (gamepad1.yWasPressed()) {
                     autoKvUntil = robot.nowS + 2.5;
                     autoKvRpmSum = 0;
                     autoKvSamples = 0;
-                    robot.event("AUTO_KV start");
                 }
 
-                boolean feed = gamepad1.right_trigger > 0.3;
+                boolean feed = gamepad1.right_trigger > TRIGGER_PRESSED;
                 robot.feeder.setMode(feed ? Feeder.Mode.FEED : Feeder.Mode.IDLE);
                 robot.flywheel.setTargetRpm(on ? target : 0);
                 robot.turret.setTarget(robot.turret.targetDeg, 0);
@@ -77,7 +75,6 @@ public class FlywheelTuner extends LinearOpMode {
                         double avg = autoKvRpmSum / autoKvSamples;
                         FLY_KV = (0.8 - FLY_KS) * (robot.volts / 12.0) / avg;
                         autoKvResult = String.format(Locale.US, "%.0f rpm at 80%% -> FLY_KV %.3g (options to save)", avg, FLY_KV);
-                        robot.event(String.format(Locale.US, "AUTO_KV avg=%.0f rpm volts=%.2f -> FLY_KV=%.4g", avg, robot.volts, FLY_KV));
                         autoKvSamples = 0;
                     }
                 }
@@ -98,14 +95,11 @@ public class FlywheelTuner extends LinearOpMode {
                     telemetry.addLine();
                     params.show(telemetry);
                     telemetry.addData("Config", ConfigIO.lastStatus);
-                    telemetry.addData("Loop", robot.loopHealth());
                     telemetry.update();
                 }
-                robot.endLoop(null);
             }
         } finally {
             robot.stopAll();
-            robot.closeLog();
         }
     }
 }

@@ -1,21 +1,23 @@
 package org.firstinspires.ftc.teamcode.biobuzz;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
+import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
+import com.qualcomm.hardware.lynx.LynxI2cDeviceSynch;
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.I2cDeviceSynchSimple;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.biobuzz.field.ZoneMap;
-import org.firstinspires.ftc.teamcode.biobuzz.log.BuzzLogger;
-import org.firstinspires.ftc.teamcode.biobuzz.log.LoopTimer;
 import org.firstinspires.ftc.teamcode.biobuzz.shooting.Ballistics;
 import org.firstinspires.ftc.teamcode.biobuzz.shooting.ShotSolver;
 import org.firstinspires.ftc.teamcode.biobuzz.shooting.ShotTable;
 import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Feeder;
 import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Flywheel;
+import org.firstinspires.ftc.teamcode.biobuzz.subsystems.IntakeDeploy;
 import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Turret;
 import org.firstinspires.ftc.teamcode.neuronpathing.NeuronDrive;
 import org.firstinspires.ftc.teamcode.neuronpathing.NeuronLocalizer;
@@ -30,9 +32,7 @@ import java.util.List;
  *   ...decide...           // OpMode / ShotController sets targets
  *   robot.write();         // subsystems write motor powers
  *   if (robot.telemetryDue()) { ...telemetry... }
- *   robot.endLoop(shot);   // timing + one log row
  * </pre>
- * Call startLog("Name") after start and closeLog() when the OpMode ends (use try/finally).
  * Hubs use MANUAL bulk caching: one bulk read per hub per loop for all encoders/velocities.
  * Battery voltage and motor currents are separate (slow) reads, so they're rate-limited.
  */
@@ -42,11 +42,10 @@ public class BuzzRobot {
     public final Turret turret;
     public final Flywheel flywheel;
     public final Feeder feeder;
+    public final IntakeDeploy deploy;
     public final ShotTable shotTable;
     public final ZoneMap zones;
     public final ShotSolver solver;
-    public final LoopTimer timer = new LoopTimer();
-    public BuzzLogger log;
 
     private final List<LynxModule> hubs;
     private final VoltageSensor battery;
@@ -61,8 +60,8 @@ public class BuzzRobot {
     /** Distance driven since the last relocalize (odometry drift grows with it). */
     public double traveledIn;
     private double lastVx, lastVy;
-    public double volts = 12.5;
-    public double nowS, dtS, loopMs;
+    public double volts = NOMINAL_VOLTS; // until the first battery read
+    public double nowS, dtS;
 
     private long lastNs = System.nanoTime();
     private final long startNs = System.nanoTime();
@@ -79,11 +78,13 @@ public class BuzzRobot {
         hubs = hw.getAll(LynxModule.class);
         for (LynxModule hub : hubs) hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
 
-        localizer = new NeuronLocalizer(hw, telemetry, PINPOINT_X_OFFSET_MM, PINPOINT_Y_OFFSET_MM);
-        drive = new NeuronDrive(hw, localizer, TRACK_WIDTH_IN);
+        localizer = new NeuronLocalizer(hw, telemetry); // name, offsets, pods, directions: Constants
+        speedUpPinpoint(localizer.pinpoint);
+        drive = new NeuronDrive(hw, localizer); // motor names/directions, track width, path gains: Constants
         turret = new Turret(hw);
         flywheel = new Flywheel(hw);
         feeder = new Feeder(hw);
+        deploy = new IntakeDeploy(hw);
         battery = hw.voltageSensor.iterator().next();
     }
 
@@ -103,37 +104,33 @@ public class BuzzRobot {
         if (fromAuto && MatchState.turretZeroValid) {
             turret.zeroTicks = MatchState.turretZeroTicks;
         } else {
-            turret.zeroHere();
+            turret.zeroHere(TURRET_START_DEG);
         }
         pose = p;
-        traveledIn = fromAuto ? 300 : 0; // after auto, assume some drift has built up
+        traveledIn = fromAuto ? AUTO_DRIFT_IN : 0; // after auto, assume some drift has built up
         return fromAuto;
     }
 
-    // ------------------------------------------------------------------ logging
-
-    public void startLog(String opModeName) {
-        if (!LOG_ENABLED) return;
-        log = new BuzzLogger(this, opModeName);
-        event("START " + opModeName + " pose " + fmt(pose));
-    }
-
-    /** Record a discrete event (rare things only -- it allocates a String). */
-    public void event(String msg) {
-        if (log != null) log.event(msg);
-    }
-
-    /** Last call of every loop: finishes timing and writes one log row. shot may be null. */
-    public void endLoop(ShotController shot) {
-        timer.mark(LoopTimer.TELEM);
-        timer.end();
-        if (log != null) log.record(shot);
-    }
-
-    public void closeLog() {
-        if (log != null) {
-            log.close();
-            log = null;
+    /**
+     * The Pinpoint read is the biggest single cost in the loop. By default the SDK driver reads
+     * 40 bytes (including loop-time and raw-encoder registers we never use) over an I2C bus left at
+     * the hub default of 100 kHz -- roughly 5 ms. Read only what we use (7 registers = 28 bytes;
+     * needs Pinpoint firmware with flexible bulk reads, otherwise the driver ignores it) and run the
+     * bus at 400 kHz (the Pinpoint supports it). NOTE: the speed applies to the whole I2C port, so
+     * anything else on that port must also handle 400 kHz -- best to give the Pinpoint its own port.
+     */
+    private static void speedUpPinpoint(GoBildaPinpointDriver pp) {
+        try {
+            pp.setBulkReadScope(GoBildaPinpointDriver.Register.DEVICE_STATUS,
+                    GoBildaPinpointDriver.Register.X_POSITION, GoBildaPinpointDriver.Register.Y_POSITION,
+                    GoBildaPinpointDriver.Register.H_ORIENTATION, GoBildaPinpointDriver.Register.X_VELOCITY,
+                    GoBildaPinpointDriver.Register.Y_VELOCITY, GoBildaPinpointDriver.Register.H_VELOCITY);
+        } catch (RuntimeException ignored) {
+            // older firmware: the driver keeps its full read
+        }
+        I2cDeviceSynchSimple client = pp.getDeviceClient();
+        if (PINPOINT_FAST_I2C && client instanceof LynxI2cDeviceSynch) {
+            ((LynxI2cDeviceSynch) client).setBusSpeed(LynxI2cDeviceSynch.BusSpeed.FAST_400K);
         }
     }
 
@@ -144,25 +141,11 @@ public class BuzzRobot {
         return true;
     }
 
-    /** One telemetry line with loop health, for the bottom of every OpMode's display. */
-    public String loopHealth() {
-        return String.format(java.util.Locale.US, "%.1f ms (p95 %.1f, max %.1f, >%.0fms %d)%s",
-                timer.loopMs, timer.percentile(0.95), timer.maxMs, LoopTimer.TARGET_MS, timer.over,
-                log == null ? " LOG OFF" : log.error() != null ? " LOG ERR " + log.error()
-                        : log.dropped() > 0 ? " dropped " + log.dropped() : "");
-    }
-
-    static String fmt(Pose2D p) {
-        return String.format(java.util.Locale.US, "(%.1f, %.1f, %.1f deg)", p.x, p.y, Math.toDegrees(p.h));
-    }
-
     // ------------------------------------------------------------------ loop
 
     public void read() {
-        timer.start();
         long now = System.nanoTime();
         dtS = Math.max((now - lastNs) / 1e9, 1e-3);
-        loopMs = dtS * 1000;
         lastNs = now;
         nowS = (now - startNs) / 1e9;
 
@@ -174,7 +157,7 @@ public class BuzzRobot {
         vy = localizer.velY();
         omega = Math.toRadians(localizer.getAngularVelocityDegPerSec());
         // acceleration from velocity change, low-passed (~40 ms) so encoder noise doesn't dominate
-        double k = Math.min(1, dtS / 0.04);
+        double k = Math.min(1, dtS / ACCEL_FILTER_S);
         ax += k * ((vx - lastVx) / dtS - ax);
         ay += k * ((vy - lastVy) / dtS - ay);
         lastVx = vx;
@@ -186,13 +169,11 @@ public class BuzzRobot {
         predVx = vx + ax * L;
         predVy = vy + ay * L;
         traveledIn += Math.hypot(vx, vy) * dtS;
-        timer.mark(LoopTimer.PINPOINT);
 
         turret.read();   // first encoder access triggers the hub bulk read
         flywheel.read(feeder.gateOpen);
-        timer.mark(LoopTimer.HUBS);
 
-        if (nowS - lastVoltsS > 0.25) {
+        if (nowS - lastVoltsS > VOLTAGE_READ_PERIOD_MS / 1000.0) {
             volts = battery.getVoltage();
             lastVoltsS = nowS;
         }
@@ -203,15 +184,14 @@ public class BuzzRobot {
             feeder.readOneCurrent();
             lastCurrentS = nowS;
         }
-        timer.mark(LoopTimer.SLOW);
     }
 
     public void write() {
-        timer.mark(LoopTimer.LOGIC);
         turret.write(volts);
         flywheel.write(volts);
-        feeder.write(nowS);
-        timer.mark(LoopTimer.WRITE);
+        // Intake arm drops automatically while intaking/ejecting; rollers wait until it's down.
+        deploy.update(DEPLOY_WITH_INTAKE && (feeder.mode == Feeder.Mode.INTAKE || feeder.mode == Feeder.Mode.EJECT), nowS);
+        feeder.write(nowS, deploy.isDown());
     }
 
     public void stopAll() {
@@ -224,28 +204,29 @@ public class BuzzRobot {
     }
 
     /**
-     * Field-centric mecanum drive in the alliance frame (stick up = away from our wall).
-     * Left stick translates, right stick x turns.
+     * Mecanum drive from the sticks: left stick translates, right stick x turns.
+     * Robot-centric by default (stick up = the way the robot faces). With FIELD_CENTRIC on,
+     * stick up = away from our wall no matter which way the robot faces.
      */
-    public void driveFieldCentric(Gamepad g, boolean slow) {
-        timer.mark(LoopTimer.LOGIC);
+    public void driveWithSticks(Gamepad g, boolean slow) {
         if (drive.driveState != NeuronDrive.DriveState.DRIVE) {
             // A path/park was running and wrote the motors itself: our cache is stale.
             drive.driveState = NeuronDrive.DriveState.DRIVE;
             invalidateDriveCache();
         }
-        double fx = -g.left_stick_y;  // field +x
-        double fy = -g.left_stick_x;  // field +y (drivers' left)
+        double fx = -g.left_stick_y;  // stick up
+        double fy = -g.left_stick_x;  // stick left
         double turn = -g.right_stick_x * TURN_SCALE;
         double scale = slow ? DRIVE_SLOW_SCALE : 1.0;
         fx *= scale;
         fy *= scale;
         turn *= scale;
 
-        double c = Math.cos(pose.h), s = Math.sin(pose.h);
+        double h = FIELD_CENTRIC ? pose.h : 0; // robot-centric: sticks are already in the robot's frame
+        double c = Math.cos(h), s = Math.sin(h);
         double forward = fx * c + fy * s;
         double left = -fx * s + fy * c;
-        left *= 1.1; // strafing is a bit weaker than driving forward
+        left *= STRAFE_MULT; // strafing is a bit weaker than driving forward
 
         double lF = forward - left - turn;
         double lB = forward + left - turn;
@@ -253,16 +234,15 @@ public class BuzzRobot {
         double rF = forward + left + turn;
         double max = Math.max(1, Math.max(Math.max(Math.abs(lF), Math.abs(lB)), Math.max(Math.abs(rB), Math.abs(rF))));
         setDriveCached(lF / max, rF / max, lB / max, rB / max);
-        timer.mark(LoopTimer.DRIVE);
     }
 
-    /** Skips the 4 motor writes when nothing changed (e.g. sticks at rest). */
+    /** Skips the 4 motor writes (~1 ms each) unless some wheel changed by DRIVE_WRITE_EPS, or we're stopping. */
     private void setDriveCached(double lF, double rF, double lB, double rB) {
         boolean zero = lF == 0 && rF == 0 && lB == 0 && rB == 0;
         boolean lastZero = lastDrive[0] == 0 && lastDrive[1] == 0 && lastDrive[2] == 0 && lastDrive[3] == 0;
         if (!Double.isNaN(lastDrive[0]) && (zero ? lastZero :
-                Math.abs(lF - lastDrive[0]) < 0.005 && Math.abs(rF - lastDrive[1]) < 0.005
-                        && Math.abs(lB - lastDrive[2]) < 0.005 && Math.abs(rB - lastDrive[3]) < 0.005)) {
+                Math.abs(lF - lastDrive[0]) < DRIVE_WRITE_EPS && Math.abs(rF - lastDrive[1]) < DRIVE_WRITE_EPS
+                        && Math.abs(lB - lastDrive[2]) < DRIVE_WRITE_EPS && Math.abs(rB - lastDrive[3]) < DRIVE_WRITE_EPS)) {
             return;
         }
         drive.setDrivePower(lF, rF, lB, rB);
@@ -275,27 +255,24 @@ public class BuzzRobot {
 
     /** Stop the drive motors (through the cache). */
     public void stopDrive() {
-        timer.mark(LoopTimer.LOGIC);
         if (drive.driveState != NeuronDrive.DriveState.DRIVE) {
             drive.driveState = NeuronDrive.DriveState.DRIVE;
             invalidateDriveCache();
         }
         setDriveCached(0, 0, 0, 0);
-        timer.mark(LoopTimer.DRIVE);
     }
 
     public static boolean sticksActive(Gamepad g) {
-        return Math.abs(g.left_stick_x) > 0.1 || Math.abs(g.left_stick_y) > 0.1 || Math.abs(g.right_stick_x) > 0.1;
+        return Math.abs(g.left_stick_x) > STICK_DEADZONE || Math.abs(g.left_stick_y) > STICK_DEADZONE
+                || Math.abs(g.right_stick_x) > STICK_DEADZONE;
     }
 
     /** Reset heading to 0 (robot facing straight away from our wall), keep x/y. */
     public void resetHeading() {
-        event("RESET_HEADING was " + fmt(pose));
         localizer.setPosition(new Pose2D(pose.x, pose.y, 0));
     }
 
     public void relocalize(Pose2D p) {
-        event("RELOCALIZE " + fmt(pose) + " -> " + fmt(p) + String.format(java.util.Locale.US, " after %.0f in driven", traveledIn));
         localizer.setPosition(p);
         traveledIn = 0;
     }

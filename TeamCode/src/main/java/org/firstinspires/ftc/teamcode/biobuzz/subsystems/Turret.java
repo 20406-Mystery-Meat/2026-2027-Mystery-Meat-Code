@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.subsystems;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -39,13 +39,14 @@ public class Turret {
     }
 
     public static double ticksPerDeg() {
-        return TURRET_TICKS_PER_MOTOR_REV * TURRET_GEAR_RATIO / 360.0;
+        return TURRET_TICKS_PER_MOTOR_REV * turretGearRatio() / 360.0;
     }
 
-    /** Declare the current physical position as "pointing straight forward". */
-    public void zeroHere() {
-        zeroTicks = motor.getCurrentPosition();
-        targetDeg = 0;
+    /** Declare that the turret is physically at atDeg right now (sets the relative encoder's zero). */
+    public void zeroHere(double atDeg) {
+        zeroTicks = motor.getCurrentPosition() - (int) Math.round(atDeg * ticksPerDeg());
+        positionDeg = atDeg;
+        targetDeg = Math.max(TURRET_MIN_DEG, Math.min(TURRET_MAX_DEG, atDeg));
     }
 
     /** Read sensors. Call once per loop after the bulk cache is cleared. */
@@ -55,13 +56,14 @@ public class Turret {
     }
 
     /**
-     * Aim at a robot-relative angle. Picks whichever equivalent angle (a, a +/- 360) is inside
-     * the soft limits and closest to where the turret is now, so it never winds up the wires.
+     * Aim at a robot-relative angle. Picks whichever equivalent angle (a, a +/- 360, a +/- 720) is
+     * inside TURRET_MIN_DEG..TURRET_MAX_DEG and closest to where the turret is now, so it never
+     * winds up the wires.
      */
     public void setTarget(double robotRelativeDeg, double rateFeedforwardDegS) {
         double a = wrap180(robotRelativeDeg);
         double best = Double.NaN;
-        for (int k = -1; k <= 1; k++) { // a-360, a, a+360 (no array: this runs every loop)
+        for (int k = -2; k <= 2; k++) { // a-720 .. a+720, for ranges over a full turn (no array: runs every loop)
             double c = a + 360 * k;
             if (c < TURRET_MIN_DEG || c > TURRET_MAX_DEG) continue;
             if (Double.isNaN(best) || Math.abs(c - positionDeg) < Math.abs(best - positionDeg)) best = c;
@@ -97,6 +99,16 @@ public class Turret {
     public void stop() {
         power = 0;
         out.set(0);
+    }
+
+    /** What the drivers must do at init, e.g. "turret STRAIGHT FORWARD" or "turret against its stop (-185 deg)". */
+    public static String startHint() {
+        String where = TURRET_START_DEG == 0 ? "turret STRAIGHT FORWARD"
+                : String.format(java.util.Locale.US, "turret at its start position (%.0f deg)", TURRET_START_DEG);
+        if (TURRET_START_DEG < TURRET_MIN_DEG || TURRET_START_DEG > TURRET_MAX_DEG) {
+            where += " -- WARNING: TURRET_START_DEG is outside TURRET_MIN/MAX_DEG";
+        }
+        return where;
     }
 
     public static double wrap180(double deg) {

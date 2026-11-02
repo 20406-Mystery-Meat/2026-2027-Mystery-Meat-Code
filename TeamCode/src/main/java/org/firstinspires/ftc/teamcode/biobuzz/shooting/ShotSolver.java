@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.shooting;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import org.firstinspires.ftc.teamcode.biobuzz.field.AimZone;
 import org.firstinspires.ftc.teamcode.biobuzz.field.Field;

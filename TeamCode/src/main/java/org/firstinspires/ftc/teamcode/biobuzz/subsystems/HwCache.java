@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.biobuzz.subsystems;
 
+import static org.firstinspires.ftc.teamcode.Constants.*;
+
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 
@@ -10,8 +12,6 @@ import com.qualcomm.robotcore.hardware.Servo;
  */
 public final class HwCache {
     private HwCache() {}
-
-    public static final double POWER_EPS = 0.005;
 
     public static class Power {
         private final DcMotorSimple motor;
@@ -24,7 +24,7 @@ public final class HwCache {
 
         public void set(double p) {
             // Always send an exact 0 so "stop" is never swallowed by the epsilon.
-            boolean changed = Double.isNaN(last) || Math.abs(p - last) >= POWER_EPS || (p == 0 && last != 0);
+            boolean changed = Double.isNaN(last) || Math.abs(p - last) >= MOTOR_WRITE_EPS || (p == 0 && last != 0);
             if (!changed) return;
             motor.setPower(p);
             last = p;

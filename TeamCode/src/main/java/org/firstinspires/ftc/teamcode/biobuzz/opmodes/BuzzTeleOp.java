@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.opmodes;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -10,22 +10,28 @@ import org.firstinspires.ftc.teamcode.biobuzz.ConfigIO;
 import org.firstinspires.ftc.teamcode.biobuzz.MatchState;
 import org.firstinspires.ftc.teamcode.biobuzz.ShotController;
 import org.firstinspires.ftc.teamcode.biobuzz.field.Field;
-import org.firstinspires.ftc.teamcode.neuronpathing.NeuronDrive;
+import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Turret;
 
 import java.util.Locale;
+import org.firstinspires.ftc.teamcode.neuronpathing.NeuronDrive;
+
 
 /**
  * BIOBUZZ competition TeleOp. Works for BOTH alliances with no alliance switch: all
  * positions are in the alliance frame (see Field.java).
  *
  * GAMEPAD 1 (driver)
- *   left stick ........ drive (field-centric, up = away from our wall)
+ *   left stick ........ drive (robot-centric: up = the way the robot faces; FIELD_CENTRIC in Constants)
  *   right stick x ..... turn
  *   left bumper ....... slow mode (hold)
- *   right trigger ..... intake (hold)
+ *   right trigger ..... intake (hold) -- the intake arm drops automatically, folds up after
+ *   dpad down ......... keep the intake arm DOWN on/off
  *   left trigger ...... eject (hold)
- *   right bumper ...... FIRE (hold) -- shoot now if >= 50% likely to score
+ *   right bumper ...... FIRE (hold): flywheel spins up to shot speed and the intake runs; pieces
+ *                       feed one at a time once it's at speed. Released: flywheel idles at FLY_IDLE_RPM
  *   B (hold) .......... HOLD FIRE -- stop auto-fire (e.g. while collecting near opponents)
+ *   X ................. MANUAL SHOOT on/off: turret freezes, flywheel spins to MANUAL_SHOT_RPM,
+ *                       aim by turning the robot, RB fires (one piece at a time)
  *   Y (hold) .......... auto-drive to PARK in our LOADING ZONE (touch sticks to cancel)
  *   options ........... reset heading (robot facing straight away from our wall)
  *   share/back ........ relocalize: robot squared in the far-left corner (back on our wall)
@@ -33,10 +39,10 @@ import java.util.Locale;
  * GAMEPAD 2 (operator)
  *   dpad left/right ... which CELL of our HIVE is UP (as seen from our drive station)
  *   right trigger ..... FIRE (hold)
- *   dpad up/down ...... RPM trim +/-25 (manual-RPM mode: +/-100)
+ *   dpad up/down ...... RPM trim +/-25 (manual-RPM / manual-shoot mode: +/-100)
  *   left/right bumper . aim trim +/-0.5 deg
  *   Y ................. clear trims
- *   A ................. flywheel pre-spin on/off
+ *   A ................. pre-spin on/off (on = flywheel stays at shot speed instead of idling)
  *   B ................. shoot-on-the-move on/off
  *   X ................. manual turret (right stick x) on/off
  *   left stick button . manual RPM on/off (fallback if odometry is lost)
@@ -64,30 +70,19 @@ public class BuzzTeleOp extends LinearOpMode {
             if (gamepad2.dpadLeftWasPressed() || gamepad1.dpadLeftWasPressed()) shot.upCell = Field.Cell.LEFT;
             if (gamepad2.dpadRightWasPressed() || gamepad1.dpadRightWasPressed()) shot.upCell = Field.Cell.RIGHT;
 
-            telemetry.addLine("== BIOBUZZ TeleOp ==");
+            telemetry.addData("Start", !MatchState.fresh() ? "far-left corner, " + Turret.startHint()
+                    : useAuto ? "from auto's end pose (B = corner instead)" : "far-left corner (A = auto's pose)");
+            telemetry.addData("Up cell", shot.upCell + "  (dpad left/right)");
             telemetry.addData("Config", ConfigIO.lastStatus);
-            telemetry.addData("Shot table", robot.shotTable.lastStatus);
-            telemetry.addData("Zones", robot.zones.lastStatus);
-            if (MatchState.fresh()) {
-                telemetry.addData("Start from", useAuto ? "AUTO end pose (B = corner instead)" : "corner reset pose (A = auto pose)");
-                telemetry.addData("Auto pose", fmtPose(MatchState.pose.x, MatchState.pose.y, MatchState.pose.h));
-            } else {
-                telemetry.addLine("No auto hand-off: robot must start in the far-left corner,");
-                telemetry.addLine("back on our wall, TURRET POINTING STRAIGHT FORWARD.");
-            }
-            telemetry.addData("UP CELL", shot.upCell + "  (dpad left/right to change)");
             telemetry.update();
         }
         if (isStopRequested()) return;
 
-        boolean fromAuto = robot.initPose(Field.resetPose(), useAuto);
-        robot.startLog("TeleOp");
-        robot.event("INIT from " + (fromAuto ? "auto hand-off" : "corner reset pose") + ", up cell " + shot.upCell);
+        robot.initPose(Field.resetPose(), useAuto);
         try {
             loop(robot, shot);
         } finally {
             robot.stopAll();
-            robot.closeLog();
         }
     }
 
@@ -105,11 +100,11 @@ public class BuzzTeleOp extends LinearOpMode {
             // ------------------------------------------------ operator selections
             if (gamepad2.dpadLeftWasPressed()) { shot.upCell = Field.Cell.LEFT; gamepad2.rumbleBlips(1); }
             if (gamepad2.dpadRightWasPressed()) { shot.upCell = Field.Cell.RIGHT; gamepad2.rumbleBlips(1); }
-            double rpmStep = shot.manualRpm ? 100 : 25;
+            double rpmStep = (shot.manualRpm || shot.manualShoot) ? MANUAL_RPM_STEP : RPM_TRIM_STEP;
             if (gamepad2.dpadUpWasPressed()) shot.rpmTrim += rpmStep;
             if (gamepad2.dpadDownWasPressed()) shot.rpmTrim -= rpmStep;
-            if (gamepad2.leftBumperWasPressed()) shot.aimTrimDeg += 0.5;
-            if (gamepad2.rightBumperWasPressed()) shot.aimTrimDeg -= 0.5;
+            if (gamepad2.leftBumperWasPressed()) shot.aimTrimDeg += AIM_TRIM_STEP_DEG;
+            if (gamepad2.rightBumperWasPressed()) shot.aimTrimDeg -= AIM_TRIM_STEP_DEG;
             if (gamepad2.yWasPressed()) { shot.rpmTrim = 0; shot.aimTrimDeg = 0; }
             if (gamepad2.aWasPressed()) shot.prespin = !shot.prespin;
             if (gamepad2.bWasPressed()) shot.shootOnMove = !shot.shootOnMove;
@@ -122,17 +117,23 @@ public class BuzzTeleOp extends LinearOpMode {
             if (gamepad2.optionsWasPressed()) {
                 shot.autoFire = !shot.autoFire;
                 gamepad2.rumbleBlips(shot.autoFire ? 2 : 1);
-                robot.event("AUTO_FIRE " + (shot.autoFire ? "enabled" : "disabled"));
             }
             if (gamepad2.shareWasPressed() || gamepad2.backWasPressed()) {
-                robot.event(String.format(Locale.US, "TURRET_REZERO was reading %.1f deg", robot.turret.positionDeg));
-                robot.turret.zeroHere();
+                robot.turret.zeroHere(0);
                 shot.manualTurretDeg = 0;
                 gamepad2.rumbleBlips(2);
             }
 
             // ------------------------------------------------ driver
             if (gamepad1.optionsWasPressed()) { robot.resetHeading(); gamepad1.rumbleBlips(1); }
+            if (gamepad1.xWasPressed()) {
+                shot.setManualShoot(!shot.manualShoot);
+                gamepad1.rumbleBlips(shot.manualShoot ? 2 : 1);
+            }
+            if (gamepad1.dpadDownWasPressed()) {
+                robot.deploy.holdDown = !robot.deploy.holdDown;
+                gamepad1.rumbleBlips(robot.deploy.holdDown ? 2 : 1);
+            }
             if (gamepad1.shareWasPressed() || gamepad1.backWasPressed()) {
                 robot.relocalize(Field.resetPose());
                 gamepad1.rumbleBlips(2);
@@ -141,62 +142,42 @@ public class BuzzTeleOp extends LinearOpMode {
             boolean wantPark = gamepad1.y && !BuzzRobot.sticksActive(gamepad1);
             if (wantPark) {
                 if (!parking) {
-                    robot.drive.goToPoint(Field.parkPose(), false, 1.0);
-                    robot.event("PARK start");
+                    robot.drive.goToPoint(Field.parkPose(), false, PARK_MAX_SPEED);
                     parking = true;
                 }
             } else {
-                if (parking) robot.event("PARK end, at park pose=" + robot.drive.atPoint());
                 parking = false;
-                robot.driveFieldCentric(gamepad1, gamepad1.left_bumper);
+                robot.driveWithSticks(gamepad1, gamepad1.left_bumper);
             }
 
-            boolean fire = gamepad1.right_bumper || gamepad2.right_trigger > 0.5;
-            boolean intake = gamepad1.right_trigger > 0.3;
-            boolean eject = gamepad1.left_trigger > 0.3;
+            boolean fire = gamepad1.right_bumper || gamepad2.right_trigger > FIRE_TRIGGER_PRESSED;
+            boolean intake = gamepad1.right_trigger > TRIGGER_PRESSED;
+            boolean eject = gamepad1.left_trigger > TRIGGER_PRESSED;
             shot.update(fire, gamepad1.b, intake, eject, gamepad2.right_stick_x);
 
             // ------------------------------------------------ feedback
-            if (shot.ready && !wasReady && (fire || shot.auto == ShotController.Auto.ARMED)) gamepad1.rumble(0.3, 0.3, 80);
+            if (shot.ready && !wasReady && (fire || shot.auto == ShotController.Auto.ARMED)) gamepad1.rumble(0.3, 0.3, (int) READY_RUMBLE_MS);
             wasReady = shot.ready;
-            if (!rumbled60 && left <= 60) { gamepad1.rumbleBlips(1); gamepad2.rumbleBlips(1); rumbled60 = true; robot.event("60s left"); }
-            if (!rumbled20 && left <= 20) { gamepad1.rumbleBlips(3); gamepad2.rumbleBlips(3); rumbled20 = true; robot.event("20s left"); }
-            if (!rumbled5 && left <= 5) { gamepad1.rumble(1000); rumbled5 = true; }
+            if (!rumbled60 && left <= RUMBLE_NECTAR_S) { gamepad1.rumbleBlips(1); gamepad2.rumbleBlips(1); rumbled60 = true; }
+            if (!rumbled20 && left <= RUMBLE_PARK_S) { gamepad1.rumbleBlips(3); gamepad2.rumbleBlips(3); rumbled20 = true; }
+            if (!rumbled5 && left <= RUMBLE_FINAL_S) { gamepad1.rumble(1000); rumbled5 = true; }
 
             robot.write();
             MatchState.save(robot.pose, shot.upCell, robot.turret.zeroTicks);
 
             // ------------------------------------------------ telemetry (rate-limited)
             if (robot.telemetryDue()) {
-                telemetry.addData("Time left", "%.0f s%s", left, left <= 20 ? "  >>> PARK (hold Y) <<<" : "");
-                telemetry.addData("UP CELL", shot.upCell);
-                telemetry.addData("AUTO-FIRE", "%s  (%.0f%% likely, need %.0f%%)", shot.auto,
-                        shot.confidence * 100, AUTO_FIRE_MIN_CONFIDENCE * 100);
-                telemetry.addData("Speed", "%.0f / %.0f in/s max for auto", shot.speed, SOTM_MAX_SPEED_IN_S);
-                telemetry.addData("READY", shot.ready ? "YES" : "no - " + shot.notReadyText());
-                telemetry.addData("Pieces", shot.hasPieces ? "probably (" + shot.shotsSinceLoad + " shot since intake)" : "EMPTY? intake to reset");
-                telemetry.addData("Shots / jams", "%d / %d", robot.flywheel.shots, robot.feeder.jams);
-                telemetry.addData("Dist (virtual/real)", "%.0f / %.0f in", shot.sol.distance, shot.sol.realDistance);
-                telemetry.addData("Zone", shot.sol.zone == null ? "-" : shot.sol.zone.name);
+                telemetry.addData("Time left", "%.0f s", left);
+                telemetry.addData("Up cell", shot.upCell);
+                telemetry.addData("Mode", shot.manualShoot ? "MANUAL SHOOT" : shot.autoFire ? "auto-fire" : "fire button only");
+                telemetry.addData("Ready", shot.ready ? "YES" : "no");
                 telemetry.addData("Flywheel", "%.0f / %.0f rpm", robot.flywheel.rpm, robot.flywheel.targetRpm);
-                telemetry.addData("Turret", "%.1f / %.1f deg (tol %.1f)", robot.turret.positionDeg, robot.turret.targetDeg, shot.sol.tolDeg);
-                telemetry.addData("Trim", "rpm %+.0f  aim %+.1f deg", shot.rpmTrim, shot.aimTrimDeg);
-                telemetry.addData("Modes", "%s%s%s%s",
-                        shot.prespin ? "PRESPIN " : "",
-                        shot.shootOnMove ? "SOTM " : "",
-                        shot.manualTurret ? "MANUAL-TURRET " : "",
-                        shot.manualRpm ? "MANUAL-RPM" : "");
-                telemetry.addData("Pose", fmtPose(robot.pose.x, robot.pose.y, robot.pose.h));
-                telemetry.addData("Feeder", "%s%s", robot.feeder.mode, robot.feeder.unjamming ? " UNJAM" : "");
-                telemetry.addData("Battery", "%.1f V", robot.volts);
-                telemetry.addData("Loop", robot.loopHealth());
+                if (TURRET_LOCKED) telemetry.addData("Turret", "locked at %.0f deg -- %s", robot.turret.positionDeg,
+                        shot.sol.valid ? String.format(Locale.US, "turn robot %.0f deg %s", Math.abs(shot.aimErrDeg), shot.aimErrDeg > 0 ? "left" : "right") : "no shot from here");
+                else telemetry.addData("Turret", "%.0f deg", robot.turret.positionDeg);
+                telemetry.addData("Intake arm", robot.deploy.state);
                 telemetry.update();
             }
-            robot.endLoop(shot);
         }
-    }
-
-    static String fmtPose(double x, double y, double h) {
-        return String.format(Locale.US, "x %.1f  y %.1f  h %.1f deg", x, y, Math.toDegrees(h));
     }
 }

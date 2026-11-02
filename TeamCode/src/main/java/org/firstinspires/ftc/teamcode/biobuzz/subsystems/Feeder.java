@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.subsystems;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -16,14 +16,16 @@ import org.firstinspires.ftc.robotcore.external.navigation.CurrentUnit;
  *  IDLE   - everything off, gate closed
  *  INTAKE - intake in, transfer slowly stages pieces up against the closed gate
  *  FEED   - gate open, intake + transfer push a piece into the flywheel
- *  FEED_HOLD - gate open, everything stopped (between feed pulses; the roller squeeze holds pieces)
+ *  FEED_HOLD - gate open, transfer stopped between feed pulses (the roller squeeze holds pieces),
+ *              intake still running if INTAKE_WHILE_FIRING
+ *  FIRE_WAIT - shoot button held while the flywheel spins up: intake on, pieces staged at the shut gate
  *  EJECT  - both reversed, gate closed
  *
  * Jam handling: if either motor's current stays above JAM_CURRENT_AMPS for JAM_TIME_S
  * while running forward, both briefly reverse, then resume automatically.
  */
 public class Feeder {
-    public enum Mode { IDLE, INTAKE, FEED, EJECT, FEED_HOLD }
+    public enum Mode { IDLE, INTAKE, FEED, EJECT, FEED_HOLD, FIRE_WAIT }
 
     public final DcMotorEx intake, transfer;
     public final Servo gate;
@@ -80,16 +82,23 @@ public class Feeder {
         transferAmps = 0;
     }
 
-    public void write(double nowS) {
+    /** @param intakeArmDown whether the intake deploy is down (rollers wait for it if INTAKE_WAIT_FOR_DEPLOY). */
+    public void write(double nowS, boolean intakeArmDown) {
         double in, tr;
         boolean open;
         switch (mode) {
             case INTAKE: in = INTAKE_POWER; tr = TRANSFER_STAGE_POWER; open = false; break;
             case FEED:   in = INTAKE_POWER; tr = TRANSFER_FEED_POWER; open = true; break;
             case EJECT:  in = EJECT_POWER;  tr = EJECT_POWER; open = false; break;
-            case FEED_HOLD: in = 0; tr = 0; open = true; break;
+            // Shoot button held, between feed pulses: gate open, transfer stopped, intake keeps pulling in.
+            case FEED_HOLD: in = INTAKE_WHILE_FIRING ? INTAKE_POWER : 0; tr = 0; open = true; break;
+            // Shoot button held, flywheel still spinning up: intake on, pieces staged against the shut gate.
+            case FIRE_WAIT: in = INTAKE_WHILE_FIRING ? INTAKE_POWER : 0; tr = TRANSFER_STAGE_POWER; open = false; break;
             default:     in = 0; tr = 0; open = false; break;
         }
+
+        // Don't spin the intake while its arm is still folded up / swinging down.
+        if (INTAKE_WAIT_FOR_DEPLOY && !intakeArmDown && (mode == Mode.INTAKE || mode == Mode.EJECT)) in = 0;
 
         boolean forward = mode == Mode.INTAKE || mode == Mode.FEED;
         if (JAM_DETECT_ENABLED && forward) {

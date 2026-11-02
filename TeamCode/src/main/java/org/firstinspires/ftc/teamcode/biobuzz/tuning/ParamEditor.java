@@ -3,12 +3,12 @@ package org.firstinspires.ftc.teamcode.biobuzz.tuning;
 import com.qualcomm.robotcore.hardware.Gamepad;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
-import org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig;
+import org.firstinspires.ftc.teamcode.Constants;
 
 import java.lang.reflect.Field;
 
 /**
- * Edits a handful of BuzzConfig doubles from a gamepad:
+ * Edits a handful of Constants doubles from a gamepad:
  *   bumpers ........... select parameter
  *   dpad right/left ... x1.05 / /1.05   (fine)
  *   X / B ............. x1.5  / /1.5    (coarse)
@@ -25,9 +25,9 @@ public class ParamEditor {
         fields = new Field[names.length];
         for (int i = 0; i < names.length; i++) {
             try {
-                fields[i] = BuzzConfig.class.getField(names[i]);
+                fields[i] = Constants.class.getField(names[i]);
             } catch (NoSuchFieldException e) {
-                throw new IllegalArgumentException("No BuzzConfig field " + names[i]);
+                throw new IllegalArgumentException("No Constants field " + names[i]);
             }
         }
     }
@@ -64,7 +64,7 @@ public class ParamEditor {
         if (g.leftStickButtonWasPressed()) set(selected, 0);
     }
 
-    /** "KP=0.025 KD=0.0012 ..." for log events. */
+    /** "KP=0.025 KD=0.0012 ..." (one line, for telemetry). */
     public String describe() {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < names.length; i++) {

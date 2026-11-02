@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.biobuzz;
 
+import static org.firstinspires.ftc.teamcode.Constants.*;
+
 import org.firstinspires.ftc.teamcode.biobuzz.field.Field;
 import org.firstinspires.ftc.teamcode.neuronpathing.Pose2D;
 
@@ -26,9 +28,9 @@ public class MatchState {
         savedAtMs = System.currentTimeMillis();
     }
 
-    /** Auto data is only trusted if it was saved recently (default: within 3 minutes). */
+    /** Auto data is only trusted if it was saved within AUTO_HANDOFF_MAX_AGE_S. */
     public static boolean fresh() {
-        return pose != null && System.currentTimeMillis() - savedAtMs < 3 * 60 * 1000;
+        return pose != null && System.currentTimeMillis() - savedAtMs < AUTO_HANDOFF_MAX_AGE_S * 1000;
     }
 
     public static void clear() {

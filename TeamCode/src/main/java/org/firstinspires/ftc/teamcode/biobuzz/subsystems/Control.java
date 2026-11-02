@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.subsystems;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 /**
  * The turret and flywheel control laws as plain functions with no hardware. The
@@ -21,7 +21,7 @@ public final class Control {
      *   2. Command that speed: kV * speed + kA * planned deceleration (feedforward)
      *      + kS (friction) + kVel * speed error.
      *
-     * All scaled to 12 V so the gains behave the same on a fresh or a tired battery.
+     * All scaled to NOMINAL_VOLTS so the gains behave the same on a fresh or a tired battery.
      */
     public static double turretPower(double errDeg, double velDegS, double rateFfDegS,
                                      double posDeg, double volts) {
@@ -34,8 +34,8 @@ public final class Control {
 
         double p = TURRET_KV * vDes + TURRET_KA * aDes + TURRET_KVEL * (vDes - velDegS);
         // Friction comp when we actually need to move: outside the deadband, or while tracking.
-        if (a > TURRET_DEADBAND_DEG || Math.abs(rateFfDegS) > 5) p += Math.signum(vDes) * TURRET_KS;
-        p *= 12.0 / Math.max(volts, 9.0);
+        if (a > TURRET_DEADBAND_DEG || Math.abs(rateFfDegS) > TURRET_TRACK_KS_MIN_DPS) p += Math.signum(vDes) * TURRET_KS;
+        p *= NOMINAL_VOLTS / Math.max(volts, MIN_COMP_VOLTS);
 
         // Never drive further past a soft limit.
         if (posDeg >= TURRET_MAX_DEG && p > 0) p = 0;
@@ -50,11 +50,22 @@ public final class Control {
      * because the boost ends FLY_BOOST_RPM before the target.
      */
     public static double flywheelPower(double targetRpm, double rpm, double volts) {
-        if (targetRpm <= 0) return 0;
+        if (targetRpm == 0) return 0;
+        // Negative target (reverse idle): same controller, mirrored.
+        if (targetRpm < 0) return -flywheelPower(-targetRpm, -rpm, volts);
         double err = targetRpm - rpm;
         if (FLY_BOOST_RPM > 0 && err > FLY_BOOST_RPM) return 1.0;
-        double v = Math.max(volts, 9.0);
-        double ff = (FLY_KV * targetRpm) * 12.0 / v + FLY_KS;
-        return Math.max(0, Math.min(1, ff + FLY_KP * err * 12.0 / v));
+        double comp = NOMINAL_VOLTS / Math.max(volts, MIN_COMP_VOLTS);
+        double ff = (FLY_KV * targetRpm) * comp + FLY_KS;
+        return Math.max(0, Math.min(1, ff + FLY_KP * err * comp));
+    }
+
+    /**
+     * Whether to re-send the flywheel power this loop: at most every FLY_WRITE_PERIOD_MS, but at once
+     * for a stop or a change of FLY_WRITE_FORCE_DELTA or more (shot recovery, spin-up).
+     */
+    public static boolean flywheelShouldSend(double power, double lastSent, double msSinceSent) {
+        return Double.isNaN(lastSent) || power == 0 || Math.abs(power - lastSent) >= FLY_WRITE_FORCE_DELTA
+                || msSinceSent >= FLY_WRITE_PERIOD_MS;
     }
 }

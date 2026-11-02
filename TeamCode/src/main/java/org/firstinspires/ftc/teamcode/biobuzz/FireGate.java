@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 /**
  * Decides, every loop, whether the gate is open and whether the transfer is pushing.

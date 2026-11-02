@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.neuronpathing;
 
+import static org.firstinspires.ftc.teamcode.Constants.*;
 import static org.firstinspires.ftc.teamcode.neuronpathing.MathFunc.angleWrap;
 
 import com.qualcomm.robotcore.hardware.DcMotorEx;
@@ -45,32 +46,15 @@ public class NeuronDrive {
 
     private final double trackWidth;
 
-    // ---- tunable follower constants (see docs/tuning.md) ----------------------
-    /** Pure-pursuit lookahead distance along the spline, in inches. Smaller cuts corners
-     *  tighter but can oscillate; larger drives smoother but wider. */
-    public static double lookaheadIn = 14;
-    /** Distance from the spline's final point at which NeuronDrive stops pure-pursuit
-     *  and hands off to the point-holding PID, in inches. */
-    public static double splineEndRadiusIn = 14;
-    /** Centripetal correction strength while cornering on a spline. Raise if the robot
-     *  cuts inside curves; lower if it overshoots/oscillates on curves. */
-    public static double centripetalGain = 0.3;
-    /** How close (inches / degrees) counts as "arrived" for goToPoint(). */
-    public static double pointToleranceIn = 5, headingToleranceDeg = 5;
-    /** Tighter tolerance used for the final settle after atPoint() (CLOSEPID). */
-    public static double closePointToleranceIn = 2, closeHeadingToleranceDeg = 2;
+    // All follower constants (lookahead, tolerances, PID gains) live in Constants.java, SECTION 4.
 
     public Spline spline = null;
     private int splineIndex = 0;
     private boolean reversedSpline = false;
 
-    public static double strafeP = 0.12, strafeI = 0, strafeD = 0.013;
-    public static double forwardP = 0.1, forwardI = 0, forwardD = 0.015;
-    public static double hP = 0.05, hI = 0, hD = 0.003;
-
-    public final PID pidForward = new PID(forwardP, forwardI, forwardD);
-    public final PID pidStrafe = new PID(strafeP, strafeI, strafeD);
-    public final PID pidH = new PID(hP, hI, hD);
+    public final PID pidForward = new PID(PATH_FORWARD_P, PATH_FORWARD_I, PATH_FORWARD_D);
+    public final PID pidStrafe = new PID(PATH_STRAFE_P, PATH_STRAFE_I, PATH_STRAFE_D);
+    public final PID pidH = new PID(PATH_HEADING_P, PATH_HEADING_I, PATH_HEADING_D);
 
     /**
      * @param trackWidthIn distance between left and right wheel contact points, in inches.
@@ -93,14 +77,21 @@ public class NeuronDrive {
             motor.setZeroPowerBehavior(DcMotorEx.ZeroPowerBehavior.BRAKE);
         }
 
-        // Standard goBILDA/REV mecanum wiring: left side motors reversed.
-        frontLeft.setDirection(DcMotorEx.Direction.REVERSE);
-        backLeft.setDirection(DcMotorEx.Direction.REVERSE);
+        // Directions: Constants.java SECTION 1 (standard mecanum wiring has the left side reversed).
+        frontLeft.setDirection(FRONT_LEFT_REVERSED ? DcMotorEx.Direction.REVERSE : DcMotorEx.Direction.FORWARD);
+        backLeft.setDirection(BACK_LEFT_REVERSED ? DcMotorEx.Direction.REVERSE : DcMotorEx.Direction.FORWARD);
+        frontRight.setDirection(FRONT_RIGHT_REVERSED ? DcMotorEx.Direction.REVERSE : DcMotorEx.Direction.FORWARD);
+        backRight.setDirection(BACK_RIGHT_REVERSED ? DcMotorEx.Direction.REVERSE : DcMotorEx.Direction.FORWARD);
     }
 
-    /** Convenience constructor with the common "frontLeft/frontRight/backLeft/backRight" hardware config names. */
+    /** Motor names from Constants, with a custom track width. */
     public NeuronDrive(HardwareMap hwMap, NeuronLocalizer localizer, double trackWidthIn) {
-        this(hwMap, localizer, trackWidthIn, "frontLeft", "frontRight", "backLeft", "backRight");
+        this(hwMap, localizer, trackWidthIn, FRONT_LEFT_MOTOR, FRONT_RIGHT_MOTOR, BACK_LEFT_MOTOR, BACK_RIGHT_MOTOR);
+    }
+
+    /** Everything from Constants: motor names and directions, track width, follower gains. */
+    public NeuronDrive(HardwareMap hwMap, NeuronLocalizer localizer) {
+        this(hwMap, localizer, TRACK_WIDTH_IN);
     }
 
     /** Call once per loop. Drives the active spline or holds the last target point. */
@@ -111,12 +102,12 @@ public class NeuronDrive {
             splineIndex = Math.min(spline.points.size() - 1, splineIndex);
 
             while (splineIndex < spline.points.size() - 1
-                    && spline.points.get(splineIndex).distanceToPoint(pose) < lookaheadIn) {
+                    && spline.points.get(splineIndex).distanceToPoint(pose) < PATH_LOOKAHEAD_IN) {
                 splineIndex++;
             }
             targetPoint = spline.points.get(Math.min(spline.points.size() - 1, splineIndex));
 
-            if (spline.points.get(spline.points.size() - 1).distanceToPoint(pose) < splineEndRadiusIn) {
+            if (spline.points.get(spline.points.size() - 1).distanceToPoint(pose) < PATH_SPLINE_END_RADIUS_IN) {
                 driveState = DriveState.PID;
                 targetPoint = spline.points.get(spline.points.size() - 1);
                 spline = null;
@@ -176,9 +167,9 @@ public class NeuronDrive {
             ppRad = (strafeError * strafeError + forwardError * forwardError) / (2 * strafeError);
         }
 
-        double speed = 0.7 + 0.3 * Math.min(Math.abs(ppRad), 200) / 200;
+        double speed = PATH_MIN_CURVE_SPEED + (1 - PATH_MIN_CURVE_SPEED) * Math.min(Math.abs(ppRad), PATH_FULL_SPEED_RADIUS_IN) / PATH_FULL_SPEED_RADIUS_IN;
         double targetFwd = speed * (reversedSpline ? -1.0 : 1.0);
-        double turn = Range.clip(targetFwd * trackWidth / ppRad, -0.9, 0.9);
+        double turn = Range.clip(targetFwd * trackWidth / ppRad, -PATH_MAX_TURN, PATH_MAX_TURN);
 
         // Re-find the closest spline point (not the lookahead point) for cross-track strafe correction.
         int index = splineIndex;
@@ -194,16 +185,17 @@ public class NeuronDrive {
         double xErr = pose.x - closeTarget.x;
         double yErr = pose.y - closeTarget.y;
         double crossTrackError = -xErr * Math.sin(closeTarget.h) + yErr * Math.cos(closeTarget.h);
-        double strafe = Range.clip(Math.abs(crossTrackError) > 2 ? crossTrackError * 0.01 : 0, -0.2, 0.2);
-        double centripetal = centripetalGain * targetFwd * targetFwd / ppRad;
+        double strafe = Range.clip(Math.abs(crossTrackError) > PATH_CROSS_TRACK_DEADBAND_IN ? crossTrackError * PATH_CROSS_TRACK_GAIN : 0,
+                -PATH_CROSS_TRACK_MAX, PATH_CROSS_TRACK_MAX);
+        double centripetal = PATH_CENTRIPETAL_GAIN * targetFwd * targetFwd / ppRad;
 
         setMecanumPowers(targetFwd, turn, centripetal, strafe);
     }
 
     private void pidToPoint() {
-        pidH.updatePID(hP, hI, hD);
-        pidStrafe.updatePID(strafeP, strafeI, strafeD);
-        pidForward.updatePID(forwardP, forwardI, forwardD);
+        pidH.updatePID(PATH_HEADING_P, PATH_HEADING_I, PATH_HEADING_D);
+        pidStrafe.updatePID(PATH_STRAFE_P, PATH_STRAFE_I, PATH_STRAFE_D);
+        pidForward.updatePID(PATH_FORWARD_P, PATH_FORWARD_I, PATH_FORWARD_D);
 
         double strafe = pidStrafe.update(strafeError);
         double forward = pidForward.update(forwardError);
@@ -272,7 +264,7 @@ public class NeuronDrive {
 
         double rotX = x * Math.cos(-h) - y * Math.sin(-h);
         double rotY = x * Math.sin(-h) + y * Math.cos(-h);
-        rotX *= 1.1; // counteract strafing being slightly weaker than forward/back
+        rotX *= STRAFE_MULT; // counteract strafing being slightly weaker than forward/back
 
         double denom = Math.max(Math.abs(rotY) + Math.abs(rotX) + Math.abs(rx), 1);
         frontLeft.setPower((rotY + rotX + rx) / denom);
@@ -282,13 +274,13 @@ public class NeuronDrive {
     }
 
     public boolean atPoint() {
-        return Math.abs(strafeError) < pointToleranceIn && Math.abs(forwardError) < pointToleranceIn
-                && Math.abs(hError) < headingToleranceDeg;
+        return Math.abs(strafeError) < PATH_POINT_TOL_IN && Math.abs(forwardError) < PATH_POINT_TOL_IN
+                && Math.abs(hError) < PATH_HEADING_TOL_DEG;
     }
 
     public boolean atClosePoint() {
-        return Math.abs(strafeError) < closePointToleranceIn && Math.abs(forwardError) < closePointToleranceIn
-                && Math.abs(hError) < closeHeadingToleranceDeg;
+        return Math.abs(strafeError) < PATH_CLOSE_POINT_TOL_IN && Math.abs(forwardError) < PATH_CLOSE_POINT_TOL_IN
+                && Math.abs(hError) < PATH_CLOSE_HEADING_TOL_DEG;
     }
 
     public boolean isBusy() {

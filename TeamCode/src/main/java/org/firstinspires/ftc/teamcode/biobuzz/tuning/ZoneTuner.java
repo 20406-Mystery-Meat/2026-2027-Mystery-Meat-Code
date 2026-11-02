@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.biobuzz.tuning;
 
+import static org.firstinspires.ftc.teamcode.Constants.*;
+
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
@@ -7,6 +9,7 @@ import org.firstinspires.ftc.teamcode.biobuzz.BuzzRobot;
 import org.firstinspires.ftc.teamcode.biobuzz.ShotController;
 import org.firstinspires.ftc.teamcode.biobuzz.field.AimZone;
 import org.firstinspires.ftc.teamcode.biobuzz.field.Field;
+import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Turret;
 
 /**
  * Create aim zones and tune their corrections by actually shooting from them.
@@ -38,12 +41,11 @@ public class ZoneTuner extends LinearOpMode {
         double[] corner1 = null;
         int newCount = 0;
 
-        telemetry.addLine("Far-left corner, back on our wall, turret forward. Then start.");
+        telemetry.addLine("Far-left corner, back on our wall, " + Turret.startHint() + ". Then start.");
         telemetry.addData("Zones", robot.zones.lastStatus);
         telemetry.update();
         waitForStart();
         robot.initPose(Field.resetPose(), false);
-        robot.startLog("ZoneTuner");
 
         try {
             while (opModeIsActive()) {
@@ -73,17 +75,13 @@ public class ZoneTuner extends LinearOpMode {
                 if (gamepad2.bWasPressed() && corner1 != null) {
                     newCount++;
                     robot.zones.zones.add(0, AimZone.rect("Z" + newCount, corner1[0], corner1[1], robot.pose.x, robot.pose.y));
-                    robot.event("ZONE_NEW " + robot.zones.zones.get(0).toLine());
                     corner1 = null;
                     gamepad2.rumbleBlips(2);
                 }
-                if (gamepad2.optionsWasPressed()) {
-                    robot.zones.save();
-                    for (AimZone zz : robot.zones.zones) robot.event("ZONE_SAVE " + zz.toLine());
-                }
+                if (gamepad2.optionsWasPressed()) robot.zones.save();
 
-                robot.driveFieldCentric(gamepad1, gamepad1.left_bumper);
-                shot.update(gamepad2.right_trigger > 0.5, gamepad1.right_trigger > 0.3, gamepad1.left_trigger > 0.3, 0);
+                robot.driveWithSticks(gamepad1, gamepad1.left_bumper);
+                shot.update(gamepad2.right_trigger > FIRE_TRIGGER_PRESSED, gamepad1.right_trigger > TRIGGER_PRESSED, gamepad1.left_trigger > TRIGGER_PRESSED, 0);
                 robot.write();
 
                 if (robot.telemetryDue()) {
@@ -99,14 +97,11 @@ public class ZoneTuner extends LinearOpMode {
                     telemetry.addData("Flywheel", "%.0f / %.0f rpm", robot.flywheel.rpm, robot.flywheel.targetRpm);
                     telemetry.addData("Pose", "x %.1f y %.1f h %.1f", robot.pose.x, robot.pose.y, Math.toDegrees(robot.pose.h));
                     telemetry.addData("Zones", robot.zones.zones.size() + " | " + robot.zones.lastStatus);
-                    telemetry.addData("Loop", robot.loopHealth());
                     telemetry.update();
                 }
-                robot.endLoop(shot);
             }
         } finally {
             robot.stopAll();
-            robot.closeLog();
         }
     }
 }

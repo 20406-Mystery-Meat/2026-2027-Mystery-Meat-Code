@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.biobuzz.tuning;
 
-import static org.firstinspires.ftc.teamcode.biobuzz.BuzzConfig.*;
+import static org.firstinspires.ftc.teamcode.Constants.*;
 
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -9,6 +9,7 @@ import org.firstinspires.ftc.teamcode.biobuzz.BuzzRobot;
 import org.firstinspires.ftc.teamcode.biobuzz.ConfigIO;
 import org.firstinspires.ftc.teamcode.biobuzz.ShotController;
 import org.firstinspires.ftc.teamcode.biobuzz.field.Field;
+import org.firstinspires.ftc.teamcode.biobuzz.subsystems.Turret;
 import org.firstinspires.ftc.teamcode.biobuzz.shooting.Ballistics;
 
 import java.util.Map;
@@ -19,8 +20,6 @@ import java.util.Map;
  * turret pointing forward. The turret auto-aims the whole time.
  *
  * GAMEPAD 1: drive (left stick / right stick x), left bumper slow, RT intake, LT eject.
- *   dpad up = last shot MADE, dpad down = last shot MISSED. These marks calibrate the
- *   "% likely to score" model: tools/analyze_log.py compares predicted vs actual.
  *
  * GAMEPAD 2 -- TABLE page (default):
  *   dpad left/right .. which CELL is up
@@ -54,12 +53,11 @@ public class ShotTableTuner extends LinearOpMode {
         boolean useTable = false;
         boolean sotmPage = false;
 
-        telemetry.addLine("Far-left corner, back on our wall, turret forward. Then start.");
+        telemetry.addLine("Far-left corner, back on our wall, " + Turret.startHint() + ". Then start.");
         telemetry.addData("Shot table", robot.shotTable.lastStatus);
         telemetry.update();
         waitForStart();
         robot.initPose(Field.resetPose(), false);
-        robot.startLog("ShotTableTuner");
 
         try {
             while (opModeIsActive()) {
@@ -69,20 +67,13 @@ public class ShotTableTuner extends LinearOpMode {
                 if (gamepad2.dpadLeftWasPressed() && !sotmPage) shot.upCell = Field.Cell.LEFT;
                 if (gamepad2.dpadRightWasPressed() && !sotmPage) shot.upCell = Field.Cell.RIGHT;
 
-                boolean markMade = gamepad1.dpadUpWasPressed(), markMissed = gamepad1.dpadDownWasPressed();
-                if (markMade || markMissed) {
-                    boolean made = markMade;
-                    robot.event(String.format(java.util.Locale.US, "RESULT %s shot#%d conf=%.2f",
-                            made ? "made" : "missed", robot.flywheel.shots, shot.lastShotConfidence));
-                    gamepad1.rumbleBlips(made ? 1 : 2);
-                }
                 if (sotmPage) {
                     shot.shootOnMove = true;
                     if (gamepad2.aWasPressed()) shot.autoFire = !shot.autoFire;
                     shot.rpmOverride = Double.NaN;
                     if (gamepad2.dpadUpWasPressed()) TOF_SCALE += 0.02;
                     if (gamepad2.dpadDownWasPressed()) TOF_SCALE = Math.max(0.5, TOF_SCALE - 0.02);
-                    if (gamepad2.optionsWasPressed()) { ConfigIO.save(); robot.event("SAVE TOF_SCALE=" + TOF_SCALE); }
+                    if (gamepad2.optionsWasPressed()) { ConfigIO.save(); }
                 } else {
                     shot.shootOnMove = false;
                     if (gamepad2.dpadUpWasPressed()) manualRpm += 25;
@@ -94,16 +85,14 @@ public class ShotTableTuner extends LinearOpMode {
                     shot.rpmOverride = useTable ? Double.NaN : manualRpm;
                     if (gamepad2.aWasPressed() && shot.sol != null) {
                         robot.shotTable.record(shot.sol.realDistance, manualRpm);
-                        robot.event(String.format(java.util.Locale.US, "TABLE_RECORD %.1f in -> %.0f rpm (pose %.1f, %.1f)",
-                                shot.sol.realDistance, manualRpm, robot.pose.x, robot.pose.y));
                         gamepad2.rumbleBlips(1);
                     }
                     if (gamepad2.bWasPressed() && shot.sol != null) robot.shotTable.removeNearest(shot.sol.realDistance);
-                    if (gamepad2.xWasPressed()) { robot.shotTable.save(); robot.event("TABLE_SAVE " + robot.shotTable.lastStatus); }
+                    if (gamepad2.xWasPressed()) { robot.shotTable.save(); }
                 }
 
-                robot.driveFieldCentric(gamepad1, gamepad1.left_bumper);
-                shot.update(gamepad2.right_trigger > 0.5, gamepad1.right_trigger > 0.3, gamepad1.left_trigger > 0.3, 0);
+                robot.driveWithSticks(gamepad1, gamepad1.left_bumper);
+                shot.update(gamepad2.right_trigger > FIRE_TRIGGER_PRESSED, gamepad1.right_trigger > TRIGGER_PRESSED, gamepad1.left_trigger > TRIGGER_PRESSED, 0);
                 robot.write();
 
                 if (robot.telemetryDue()) {
@@ -111,7 +100,7 @@ public class ShotTableTuner extends LinearOpMode {
                     telemetry.addData("UP CELL", shot.upCell);
                     telemetry.addData("Distance real / virtual", "%.1f / %.1f in", shot.sol.realDistance, shot.sol.distance);
                     telemetry.addData("READY", shot.ready ? "YES" : "no - " + shot.notReadyText());
-                    telemetry.addData("Likely to score", "%.0f%%  (mark last shot: gp1 dpad up=made, down=missed)", shot.confidence * 100);
+                    telemetry.addData("Likely to score", "%.0f%%", shot.confidence * 100);
                     telemetry.addData("Flywheel", "%.0f / %.0f rpm", robot.flywheel.rpm, robot.flywheel.targetRpm);
                     if (sotmPage) {
                         telemetry.addData("TOF_SCALE", "%.2f", TOF_SCALE);
@@ -138,14 +127,11 @@ public class ShotTableTuner extends LinearOpMode {
                         telemetry.addLine(sb.toString());
                     }
                     telemetry.addData("Pose", "x %.1f y %.1f h %.1f", robot.pose.x, robot.pose.y, Math.toDegrees(robot.pose.h));
-                    telemetry.addData("Loop", robot.loopHealth());
                     telemetry.update();
                 }
-                robot.endLoop(shot);
             }
         } finally {
             robot.stopAll();
-            robot.closeLog();
         }
     }
 }
